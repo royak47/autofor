@@ -2,11 +2,13 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
-const { createClient } = require('redis');
 const winston = require('winston');
 const { TelegramClient, NewMessage } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 require('dotenv').config();
+
+// Fix Mongoose strictQuery warning
+mongoose.set('strictQuery', true);
 
 const app = express();
 app.use(helmet());
@@ -27,14 +29,10 @@ const logger = winston.createLogger({
   ]
 });
 
-// Redis Setup
-const redisClient = createClient({ url: process.env.REDIS_URL });
-redisClient.connect().catch(err => logger.error('Redis connection error:', err));
-
 // MongoDB Setup
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => logger.info('MongoDB connected'))
-  .catch(err => logger.error('MongoDB error:', err));
+  .catch(err => logger.error('MongoDB connection error:', err));
 
 // Telegram Setup
 const apiId = parseInt(process.env.TELEGRAM_API_ID);
@@ -70,27 +68,8 @@ const SessionSchema = new mongoose.Schema({
 });
 const Session = mongoose.model('Session', SessionSchema);
 
-// Rate Limiting Middleware
-const rateLimit = async (req, res, next) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ message: 'Phone number required' });
-  try {
-    const key = `rate:${phone}`;
-    const count = await redisClient.incr(key);
-    if (count === 1) await redisClient.expire(key, 600); // 10 mins
-    if (count > 5) {
-      logger.warn(`Rate limit exceeded for phone: ${phone}`);
-      return res.status(429).json({ message: 'Too many OTP requests, try again later' });
-    }
-    next();
-  } catch (error) {
-    logger.error('Rate limit error:', err);
-    next();
-  }
-};
-
 // Send OTP
-app.post('/api/send-otp', rateLimit, async (req, res) => {
+app.post('/api/send-otp', async (req, res) => {
   const { phone, country } = req.body;
   logger.info(`OTP request for phone: ${phone}, country: ${country}`);
   if (!phone || !country) {
@@ -262,9 +241,8 @@ process.on('SIGTERM', async () => {
     activeClients.delete(telegramId);
   }
   mongoose.connection.close();
-  await redisClient.disconnect();
   process.exit(0);
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
