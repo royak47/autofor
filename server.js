@@ -13,6 +13,7 @@ app.use(helmet());
 app.use(cors({ origin: 'https://telegram-forwarder.pages.dev' }));
 app.use(express.json());
 
+// Logger Setup
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -26,18 +27,22 @@ const logger = winston.createLogger({
   ]
 });
 
+// Redis Setup
 const redisClient = createClient({ url: process.env.REDIS_URL });
 redisClient.connect().catch(err => logger.error('Redis connection error:', err));
 
+// MongoDB Setup
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => logger.info('MongoDB connected'))
   .catch(err => logger.error('MongoDB error:', err));
 
+// Telegram Setup
 const apiId = parseInt(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 const sessions = new Map();
 const activeClients = new Map();
 
+// Schemas
 const UserSchema = new mongoose.Schema({
   telegramId: String,
   phoneNumber: String,
@@ -65,13 +70,14 @@ const SessionSchema = new mongoose.Schema({
 });
 const Session = mongoose.model('Session', SessionSchema);
 
+// Rate Limiting Middleware
 const rateLimit = async (req, res, next) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ message: 'Phone number required' });
   try {
     const key = `rate:${phone}`;
     const count = await redisClient.incr(key);
-    if (count === 1) await redisClient.expire(key, 600);
+    if (count === 1) await redisClient.expire(key, 600); // 10 mins
     if (count > 5) {
       logger.warn(`Rate limit exceeded for phone: ${phone}`);
       return res.status(429).json({ message: 'Too many OTP requests, try again later' });
@@ -83,6 +89,7 @@ const rateLimit = async (req, res, next) => {
   }
 };
 
+// Send OTP
 app.post('/api/send-otp', rateLimit, async (req, res) => {
   const { phone, country } = req.body;
   logger.info(`OTP request for phone: ${phone}, country: ${country}`);
@@ -106,6 +113,7 @@ app.post('/api/send-otp', rateLimit, async (req, res) => {
   }
 });
 
+// Verify OTP
 app.post('/api/verify-otp', async (req, res) => {
   const { phone, code, password } = req.body;
   logger.info(`OTP verification attempt for phone: ${phone}`);
@@ -127,7 +135,7 @@ app.post('/api/verify-otp', async (req, res) => {
       telegramId,
       phoneNumber: phone,
       username: me.username || 'N/A',
-      firstName: me.phone || 'N/A',
+      firstName: me.firstName || 'N/A',
       country: req.body.country || 'N/A'
     };
     await User.findOneAndUpdate({ telegramId }, userData, { upsert: true });
@@ -141,12 +149,13 @@ app.post('/api/verify-otp', async (req, res) => {
     res.json({ message: 'Login successful', telegramId });
   } catch (error) {
     logger.error(`Verify OTP error for ${phone}: ${error.message}`);
-    res.status(error.message.includes('Failed') ? 400 : 500).json({
-      message: error.message.includes('Failed') ? 'Failed to verify OTP' : error.message
+    res.status(error.message.includes('2FA') ? 400 : 500).json({
+      message: error.message.includes('2FA') ? '2FA password required' : 'Failed to verify OTP'
     });
   }
 });
 
+// Create Rule
 app.post('/api/rules', async (req, res) => {
   const { telegramId, sourceChat, targetChat, filterType, keyword, editText, replaceText } = req.body;
   logger.info(`Creating rule for telegramId: ${telegramId}`);
@@ -160,6 +169,7 @@ app.post('/api/rules', async (req, res) => {
   }
 });
 
+// Fetch Rules
 app.get('/api/rules/:telegramId', async (req, res) => {
   logger.info(`Fetching rules for telegramId: ${req.params.telegramId}`);
   try {
@@ -171,6 +181,7 @@ app.get('/api/rules/:telegramId', async (req, res) => {
   }
 });
 
+// Start Forwarding Logic
 const startForwarding = async (telegramId, client) => {
   try {
     const rules = await Rule.find({ telegramId, isForwarding: true });
@@ -182,13 +193,13 @@ const startForwarding = async (telegramId, client) => {
         if (message.chatId.toString() !== rule.sourceChat) continue;
 
         let shouldForward = false;
-        if (rule.filterType === 'ALL') shouldForward = true;
-        else if (rule.filterType === 'Text' && message.text) shouldForward = true;
-        else if (rule.filterType === 'Media' && (message.photo || message.video)) shouldForward = true;
-        else if (rule.filterType === 'Links' && message.text.includes('http')) shouldForward = true;
+        if (rule.filterType === 'all') shouldForward = true;
+        else if (rule.filterType === 'text' && message.text) shouldForward = true;
+        else if (rule.filterType === 'media' && (message.photo || message.video)) shouldForward = true;
+        else if (rule.filterType === 'links' && message.text?.includes('http')) shouldForward = true;
 
         if (rule.keyword && shouldForward) {
-          shouldForward = message.text.toLowerCase().includes(rule.keyword.toLowerCase());
+          shouldForward = message.text?.toLowerCase().includes(rule.keyword.toLowerCase());
         }
 
         if (!shouldForward) continue;
@@ -209,6 +220,7 @@ const startForwarding = async (telegramId, client) => {
   }
 };
 
+// Toggle Forwarding
 app.post('/api/toggle-forwarding', async (req, res) => {
   const { telegramId, enable } = req.body;
   logger.info(`Toggling forwarding for telegramId: ${telegramId}, enable: ${enable}`);
@@ -242,6 +254,7 @@ app.post('/api/toggle-forwarding', async (req, res) => {
   }
 });
 
+// Cleanup on Shutdown
 process.on('SIGTERM', async () => {
   logger.info('Shutting down server...');
   for (const [telegramId, client] of activeClients) {
