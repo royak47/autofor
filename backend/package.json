@@ -1,0 +1,20 @@
+{
+  "name": "telegram-forwarder-backend",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "mongoose": "^6.12.9",
+    "cors": "^2.8.5",
+    "helmet": "^6.2.0",
+    "redis": "^4.7.0",
+    "winston": "^3.14.2",
+    "telegram": "^2.25.12",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": "22.6.0"
+  }
+}
