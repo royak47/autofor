@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telegram Auto-Forward Web3 App</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/web3@1.10.0/dist/web3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.7.2/dist/axios.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+  <script src="https://telegram.org/js/telegram-widget.js?22"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const App = () => {
+      const [isLoggedIn, setIsLoggedIn] = useState(false);
+      const [telegramUser, setTelegramUser] = useState(null);
+      const [account, setAccount] = useState(null);
+      const [sourceChat, setSourceChat] = useState('');
+      const [targetChat, setTargetChat] = useState('');
+      const [filterType, setFilterType] = useState('all');
+      const [keyword, setKeyword] = useState('');
+      const [editText, setEditText] = useState('');
+      const [replaceText, setReplaceText] = useState('');
+      const [rules, setRules] = useState([]);
+      const [message, setMessage] = useState('');
+
+      // Handle Telegram Login
+      window.onTelegramAuth = async (user) => {
+        try {
+          const response = await axios.post('http://localhost:5000/api/telegram-login', user);
+          setTelegramUser({
+            id: user.id,
+            phone: user.phone_number || 'N/A',
+            firstName: user.first_name
+          });
+          setIsLoggedIn(true);
+          setMessage('Login successful!');
+        } catch (error) {
+          setMessage('Telegram login failed');
+        }
+      };
+
+      // Connect to MetaMask (Optional)
+      const connectWallet = async () => {
+        if (window.ethereum) {
+          try {
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            setAccount(accounts[0]);
+            setMessage('Wallet connected');
+          } catch (error) {
+            setMessage('Failed to connect wallet');
+          }
+        } else {
+          setMessage('MetaMask not installed');
+        }
+      };
+
+      // Create forwarding rule
+      const createRule = async () => {
+        if (!telegramUser) return setMessage('Please log in first');
+        try {
+          const response = await axios.post('http://localhost:5000/api/rules', {
+            telegramId: telegramUser.id,
+            sourceChat,
+            targetChat,
+            filterType,
+            keyword,
+            editText,
+            replaceText
+          });
+          setRules([...rules, response.data.rule]);
+          setMessage('Rule created successfully');
+          setSourceChat('');
+          setTargetChat('');
+          setKeyword('');
+          setEditText('');
+          setReplaceText('');
+        } catch (error) {
+          setMessage('Failed to create rule');
+        }
+      };
+
+      // Fetch existing rules
+      useEffect(() => {
+        const fetchRules = async () => {
+          if (!telegramUser) return;
+          try {
+            const response = await axios.get(`http://localhost:5000/api/rules/${telegramUser.id}`);
+            setRules(response.data);
+          } catch (error) {
+            console.error('Failed to fetch rules');
+          }
+        };
+        fetchRules();
+      }, [telegramUser]);
+
+      return (
+        <div className="min-h-screen bg-gray-100 p-6">
+          <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-lg">
+            <h1 className="text-2xl font-bold mb-6 text-center">Telegram Auto-Forward Web3 App</h1>
+
+            {!isLoggedIn ? (
+              <div className="text-center">
+                <p className="mb-4 text-lg">Please log in with your Telegram account</p>
+                <div
+                  data-telegram-login="YourBotUsername"
+                  data-size="large"
+                  data-onauth="onTelegramAuth(user)"
+                  data-request-access="write"
+                ></div>
+              </div>
+            ) : (
+              <>
+                {/* User Info */}
+                <div className="mb-4">
+                  <p className="text-green-600 font-medium">
+                    Logged in as: {telegramUser.firstName} (ID: {telegramUser.id}, Phone: {telegramUser.phone})
+                  </p>
+                </div>
+
+                {/* Wallet Connection */}
+                {!account ? (
+                  <button
+                    onClick={connectWallet}
+                    className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600 mb-4"
+                  >
+                    Connect MetaMask (Optional)
+                  </button>
+                ) : (
+                  <p className="text-green-600 mb-4">Connected Wallet: {account.slice(0, 6)}...{account.slice(-4)}</p>
+                )}
+
+                {/* Create Forwarding Rule */}
+                <div className="mb-6">
+                  <h2 className="text-lg font-semibold mb-2">Create Forwarding Rule</h2>
+                  <label className="block text-sm font-medium mb-1">Source Chat (Channel/Group ID)</label>
+                  <input
+                    type="text"
+                    value={sourceChat}
+                    onChange={(e) => setSourceChat(e.target.value)}
+                    className="w-full border p-2 rounded mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    placeholder="e.g., @SourceChannel"
+                  />
+                  <label className="block text-sm font-medium mb-1">Target Chat (Channel/Group ID)</label>
+                  <input
+                    type="text"
+                    value={targetChat}
+                    onChange={(e) => setTargetChat(e.target.value)}
+                    className="w-full border p-2 rounded mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    placeholder="e.g., @TargetChannel"
+                  />
+                  <label className="block text-sm font-medium mb-1">Filter Type</label>
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="w-full border p-2 rounded mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="all">All Messages</option>
+                    <option value="text">Text Only</option>
+                    <option value="media">Media (Photos/Videos)</option>
+                    <option value="links">Links</option>
+                  </select>
+                  <label className="block text-sm font-medium mb-1">Keyword Filter (Optional)</label>
+                  <input
+                    type="text"
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    className="w-full border p-2 rounded mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    placeholder="e.g., #important"
+                  />
+                  <label className="block text-sm font-medium mb-1">Replace Text (Optional)</label>
+                  <input
+                    type="text"
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    className="w-full border p-2 rounded mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    placeholder="Text to replace (e.g., 'old')"
+                  />
+                  <label className="block text-sm font-medium mb-1">With Text (Optional)</label>
+                  <input
+                    type="text"
+                    value={replaceText}
+                    onChange={(e) => setReplaceText(e.target.value)}
+                    className="w-full border p-2 rounded mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    placeholder="Replacement text (e.g., 'new')"
+                  />
+                  <button
+                    onClick={createRule}
+                    className="w-full bg-purple-500 text-white py-2 rounded hover:bg-purple-600"
+                  >
+                    Create Rule
+                  </button>
+                </div>
+
+                {/* Display Rules */}
+                <div>
+                  <h2 className="text-lg font-semibold mb-2">Existing Rules</h2>
+                  {rules.length === 0 ? (
+                    <p className="text-gray-500">No rules found</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {rules.map((rule, index) => (
+                        <li key={index} className="border-b py-2">
+                          <p>
+                            <span className="font-medium">From:</span> {rule.sourceChat} →{' '}
+                            <span className="font-medium">To:</span> {rule.targetChat} |{' '}
+                            <span className="font-medium">Filter:</span> {rule.filterType} |{' '}
+                            <span className="font-medium">Keyword:</span> {rule.keyword || 'None'} |{' '}
+                            <span className="font-medium">Edit:</span>{' '}
+                            {rule.editText ? `Replace "${rule.editText}" with "${rule.replaceText}"` : 'None'}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Status Message */}
+            {message && <p className="text-red-500 mt-4 text-center">{message}</p>}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
